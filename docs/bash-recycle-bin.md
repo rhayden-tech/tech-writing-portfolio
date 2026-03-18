@@ -1,311 +1,162 @@
-# Edge Camera Capture System: Non-Networked Meter Monitoring
+# Bash Recycle Bin with Automated Cleanup
 
 ## Overview
 
-An autonomous daily image capture system built on a Raspberry Pi Zero 2 WH. Photographs a fixed analogue display (utility meter or similar non-networked device) on a schedule, organises images into monthly folders, retries on failure, sends email alerts on repeated failure, and syncs captured images to a Windows machine via WSL.
+A soft-delete system for Bash that moves files to a recycle directory instead of permanently deleting them. Files are automatically purged after 30 days of inactivity. All operations are logged with timestamps.
 
 ---
 
-## System Requirements
+## Components
 
-### Hardware
-
-| Component | Specification |
+| Component | Description |
 |---|---|
-| SBC | Raspberry Pi Zero 2 WH |
-| Camera | Raspberry Pi Camera Module 3 |
-| Ribbon cable | GeeekPi 15-pin to 22-pin |
-| Storage | Micro SD card |
-| Power | Micro-USB power supply |
-
-### OS
-
-Raspberry Pi OS Lite (32-bit). Flash via Raspberry Pi Imager with the following headless configuration:
-
-- SSH enabled
-- Hostname configured (e.g. `meterpi.local`)
-- Wi-Fi SSID and password set
-- Username, password, locale, and timezone set
+| `bin` | Shell function that moves files to the recycle directory |
+| `hoover_rubbish.sh` | Cleanup script that purges files inactive for 30+ days |
 
 ---
 
-## Initial Setup
-```bash
-ssh roy@meterpi.local
+## Prerequisites
 
-sudo apt update && sudo apt full-upgrade -y && sudo reboot
-```
-
-Verify camera:
-```bash
-libcamera-hello
-libcamera-still -n -o test.jpg && ls -lh test.jpg
-```
+- Bash
+- `find`, `stat`, `printf` (standard on all Linux distributions)
+- `cron` (optional, for scheduled execution)
 
 ---
 
-## Focus Lock
+## Setup
 
-Autofocus variation between captures produces inconsistent framing over time. Lock lens position after finding optimal focus.
+### 1. Create the recycle directory
 ```bash
-# Find focus
-libcamera-still --autofocus-mode auto --autofocus-on-capture -o focus.jpg
-
-# Lock position (tune value as needed)
-libcamera-still --lens-position 0.0 -o locked.jpg
+mkdir -p ~/30_day_recycle_bin
 ```
 
----
-
-## Version 1: Basic Daily Capture
+### 2. Add the `bin` function to `~/.bashrc`
 ```bash
-mkdir -p /home/roy/meter_photos
-```
-```bash
-#!/bin/bash
-
-DATE=$(date +"%Y-%m-%d_%H-%M")
-
-libcamera-still \
-  --lens-position 0.0 \
-  --nopreview \
-  --width 1920 \
-  --height 1080 \
-  -o /home/roy/meter_photos/meter_${DATE}.jpg
-```
-```bash
-chmod +x /home/roy/capture_meter.sh
-```
-
-Cron schedule (daily at 09:00):
-```
-0 9 * * * /home/roy/capture_meter.sh
-```
-
----
-
-## Version 2: Resilient Capture with Retry and Email Alerting
-
-Stores images at `/home/roy/meter_photos/<Mon>/<YYYY-MM-DD>.jpg`. Retries once after 1 hour on failure. Sends email alert on second failure.
-
-### Install mail tooling
-```bash
-sudo apt install -y msmtp msmtp-mta mailutils
-```
-
-### Configure msmtp
-```
-defaults
-auth           on
-tls            on
-tls_starttls   on
-logfile        /home/roy/meter_photos/msmtp.log
-
-account        gmail
-host           smtp.gmail.com
-port           587
-from           myusername@gmail.com
-user           myusername@gmail.com
-password       YOUR_APP_PASSWORD
-
-account default : gmail
-```
-```bash
-chmod 600 /home/roy/.msmtprc
-```
-
-### Capture script
-```bash
-#!/bin/bash
-set -euo pipefail
-
-TO_EMAIL="myusername@gmail.com"
-BASE="/home/roy/meter_photos"
-
-MONTH="$(LC_TIME=C date +%b)"
-DATE="$(date +%F)"
-DIR="${BASE}/${MONTH}"
-FILE="${DIR}/${DATE}.jpg"
-LOG="${BASE}/capture_${DATE}.log"
-
-mkdir -p "$DIR"
-
-capture_once() {
-  rpicam-still -n -o "$FILE" >>"$LOG" 2>&1 || return 1
-  [[ -s "$FILE" ]]
+bin() {
+  if [ $# -eq 0 ]; then
+    echo "Usage: bin <file1> [file2 ...]"
+    return 1
+  fi
+  mv "$@" ~/30_day_recycle_bin/
 }
-
-if capture_once; then exit 0; fi
-
-sleep 3600
-
-if capture_once; then exit 0; fi
-
-echo "Meter capture FAILED.
-Host: $(hostname)
-Time: $(date -Is)
-Expected file: $FILE
-
-Last 200 lines of log:
-$(tail -n 200 "$LOG" 2>/dev/null || true)
-" | mail -s "Meter capture failed (${DATE})" "$TO_EMAIL"
-
-exit 1
 ```
 ```bash
-chmod +x /home/roy/capture_meter_resilient.sh
-```
-
-Cron schedule:
-```
-0 9 * * * /home/roy/capture_meter_resilient.sh
-```
-
----
-
-## WSL Sync to Windows
-
-Pulls the daily image from the Pi to a Windows path via WSL SCP. Retries once after 1 hour on failure. Sends email alert on second failure.
-
-Target path: `C:\Users\Roy\Desktop\Media Xfer\Images\Meter\<Mon>\<YYYY-MM-DD>.jpg`
-
-### Install mail tooling in WSL
-```bash
-sudo apt install -y msmtp msmtp-mta mailutils
-chmod 600 ~/.msmtprc
-```
-
-### Pull script
-```bash
-#!/bin/bash
-set -euo pipefail
-
-TO_EMAIL="myusername@gmail.com"
-PI_USER="roy"
-PI_IP="<Pi_IP>"
-PASSFILE="/home/rhayden/scripts/sshpass_for_meterpi"
-
-MONTH="$(LC_TIME=C date +%b)"
-DATE="$(date +%F)"
-
-REMOTE="/home/roy/meter_photos/${MONTH}/${DATE}.jpg"
-LOCAL_BASE="/mnt/c/Users/Roy/Desktop/Media Xfer/Images/Meter/${MONTH}"
-LOCAL_FILE="${LOCAL_BASE}/${DATE}.jpg"
-LOG="/home/rhayden/scripts/pull_meter_${DATE}.log"
-
-mkdir -p "$LOCAL_BASE"
-chmod 600 "$PASSFILE"
-
-pull_once() {
-  sshpass -f "$PASSFILE" scp \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    "${PI_USER}@${PI_IP}:${REMOTE}" \
-    "$LOCAL_FILE" >>"$LOG" 2>&1 || return 1
-  [[ -s "$LOCAL_FILE" ]]
-}
-
-if pull_once; then exit 0; fi
-
-sleep 3600
-
-if pull_once; then exit 0; fi
-
-echo "Meter WSL pull FAILED.
-Time: $(date -Is)
-Remote expected: $REMOTE
-Local expected:  $LOCAL_FILE
-
-Last 200 lines of log:
-$(tail -n 200 "$LOG" 2>/dev/null || true)
-" | mail -s "Meter WSL pull failed (${DATE})" "$TO_EMAIL"
-
-exit 1
-```
-```bash
-chmod +x /home/rhayden/scripts/pull_meter_photo.sh
-```
-
-Cron schedule (5 minutes after capture):
-```
-5 9 * * * /home/rhayden/scripts/pull_meter_photo.sh
-```
-
-Ensure cron is running in WSL:
-```bash
-sudo systemctl enable --now cron
-# or
-sudo service cron start
-```
-
----
-
-## One-Shot Command: Capture, Pull, Open
-
-Triggers capture on the Pi, pulls the image to the local Windows path, and opens it in Windows Explorer.
-```bash
-#!/bin/bash
-set -euo pipefail
-
-PI_USER="roy"
-PI_IP="<Pi_IP>"
-PASSFILE="/home/rhayden/scripts/sshpass_for_meterpi"
-
-MONTH="$(LC_TIME=C date +%b)"
-DATE="$(date +%F)"
-
-REMOTE_CAPTURE="/home/roy/capture_meter_resilient.sh"
-REMOTE_FILE="/home/roy/meter_photos/${MONTH}/${DATE}.jpg"
-LOCAL_DIR="/mnt/c/Users/Roy/Desktop/Media Xfer/Images/Meter/${MONTH}"
-LOCAL_FILE="${LOCAL_DIR}/${DATE}.jpg"
-
-mkdir -p "$LOCAL_DIR"
-
-sshpass -f "$PASSFILE" ssh \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  "${PI_USER}@${PI_IP}" \
-  "bash '$REMOTE_CAPTURE'"
-
-sshpass -f "$PASSFILE" scp \
-  -o StrictHostKeyChecking=no \
-  -o UserKnownHostsFile=/dev/null \
-  "${PI_USER}@${PI_IP}:${REMOTE_FILE}" \
-  "$LOCAL_FILE"
-
-"/mnt/c/Windows/explorer.exe" "$(wslpath -w "$LOCAL_FILE")"
-```
-```bash
-chmod +x /home/rhayden/scripts/meterphoto.sh
-```
-
-Optional alias:
-```bash
-echo "alias meterphoto='/home/rhayden/scripts/meterphoto.sh'" >> ~/.bashrc
 source ~/.bashrc
 ```
 
 ---
 
-## Operational Notes
+## Usage
+```bash
+bin file1.txt file2.txt
+```
 
-- Keep the camera mount rigid. Physical movement invalidates frame consistency across captures.
-- Keep lighting consistent. Avoid glare and reflections on the display face.
-- Do not publish scripts containing real IPs, hostnames, usernames, passwords, or file paths.
+Files are moved to `~/30_day_recycle_bin/`. The source directory is unaffected.
+
+---
+
+## Cleanup Script
+
+`hoover_rubbish.sh` identifies and removes files that have not been accessed or modified in 30+ days. Both conditions must be true for deletion to occur.
+```bash
+#!/bin/bash
+
+RECYCLE_DIR="/home/roy/30_day_recycle_bin"
+
+if [[ ! -d "$RECYCLE_DIR" ]]; then
+    echo "Error: Directory $RECYCLE_DIR does not exist."
+    exit 1
+fi
+
+LOG_FILE="$RECYCLE_DIR/hoover_rubbish.log"
+CURRENT_DATE=$(date "+%Y-%m-%d %H:%M")
+
+echo "" >> "$LOG_FILE"
+echo "==============================" >> "$LOG_FILE"
+echo "$CURRENT_DATE: Script executed." >> "$LOG_FILE"
+
+ALL_FILES=$(find "$RECYCLE_DIR" -type f)
+
+if [[ -z "$ALL_FILES" ]]; then
+    echo "$CURRENT_DATE: Checked $RECYCLE_DIR and found no files." >> "$LOG_FILE"
+else
+    echo "$CURRENT_DATE: Checked $RECYCLE_DIR and found the following files:" >> "$LOG_FILE"
+    printf "%-60s %-25s %-25s\n" "File" "atime" "mtime" >> "$LOG_FILE"
+    printf "%-60s %-25s %-25s\n" "----" "-----" "-----" >> "$LOG_FILE"
+
+    while IFS= read -r FILE; do
+        ATIME=$(stat --format='%x' "$FILE" | cut -d'.' -f1)
+        MTIME=$(stat --format='%y' "$FILE" | cut -d'.' -f1)
+        printf "%-60s %-25s %-25s\n" "$FILE" "$ATIME" "$MTIME" >> "$LOG_FILE"
+    done <<< "$ALL_FILES"
+
+    FILES_TO_DELETE=$(find "$RECYCLE_DIR" -type f -atime +30 -mtime +30)
+
+    if [[ -z "$FILES_TO_DELETE" ]]; then
+        echo "$CURRENT_DATE: No files to delete in $RECYCLE_DIR." >> "$LOG_FILE"
+    else
+        echo "$CURRENT_DATE: Deleting the following files:" >> "$LOG_FILE"
+        while IFS= read -r FILE; do
+            echo "$FILE" >> "$LOG_FILE"
+            rm -f "$FILE"
+        done <<< "$FILES_TO_DELETE"
+        echo "$CURRENT_DATE: Successfully deleted files older than 1 month from $RECYCLE_DIR." >> "$LOG_FILE"
+    fi
+fi
+```
+```bash
+chmod +x ~/scripts/hoover_rubbish.sh
+```
+
+---
+
+## Scheduling
+
+Run daily at 03:00 via cron:
+```bash
+crontab -e
+```
+```
+0 3 * * * /home/roy/scripts/hoover_rubbish.sh
+```
+
+---
+
+## Log Output
+
+Normal run (no deletions):
+```
+==============================
+2025-01-06 12:00: Script executed.
+2025-01-06 12:00: Checked /home/roy/30_day_recycle_bin and found the following files:
+File                                                         atime                     mtime
+----                                                         -----                     -----
+/home/roy/30_day_recycle_bin/teleport_7.3.26_amd64.deb       2024-12-18 14:29:37       2024-11-27 12:10:55
+/home/roy/30_day_recycle_bin/hoover_rubbish.log              2025-01-06 09:00:51       2025-01-06 12:00:01
+2025-01-06 12:00: No files to delete in /home/roy/30_day_recycle_bin.
+```
+
+Deletion run:
+```
+==============================
+2025-01-20 12:00: Script executed.
+2025-01-20 12:00: Deleting the following files:
+/home/roy/30_day_recycle_bin/teleport_7.3.26_amd64.deb
+2025-01-20 12:00: Successfully deleted files older than 1 month from /home/roy/30_day_recycle_bin.
+```
+
+---
+
+## Deletion Criteria
+
+A file is deleted only when both of the following are true:
+
+- Not accessed (`atime`) in 30+ days
+- Not modified (`mtime`) in 30+ days
 
 ---
 
 ## Known Limitations
 
-- Requires `sshpass` for non-interactive SCP. Key-based authentication is the more secure alternative.
-- No deduplication check. If the one-shot command is run multiple times in a day, the file is overwritten silently.
-- No local image validation after pull (e.g. file integrity or corruption check).
-
----
-
-## Planned Extensions
-
-- OCR of meter reading into a daily CSV
-- Daily delta and kWh extraction
-- Alerting on abnormal consumption jumps
-- Local dashboard for historical trend viewing
+- Systems mounted with `relatime` do not update `atime` on every read. Access time tracking may be imprecise on such systems.
+- The `bin` function does not handle filename collisions in the recycle directory. Files with identical names will overwrite each other silently.

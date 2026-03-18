@@ -1,8 +1,28 @@
-# Screen Dimmer with Python
+# Screen Dimmer: Blackout Overlay and Brightness Control
+
+## Overview
+
+Two Python approaches to darken connected monitors. The first creates a full interactive blackout overlay across all displays. The second adjusts the physical monitor backlight directly.
+
+---
+
+## Prerequisites
+
+### Blackout overlay
+```bash
+pip install pyglet screeninfo
+```
+
+### Brightness control
+```bash
+pip install screen_brightness_control
+```
+
+---
 
 ## Method 1: Blackout Overlay
 
-Creates a full black overlay on every connected monitor. Windows underneath are not clickable. Press `Esc` or `Enter` to exit.
+Creates a fullscreen black window on every connected monitor. Underlying windows are not clickable. Press `Esc` or `Enter` to exit.
 ```python
 import pyglet
 from screeninfo import get_monitors
@@ -30,15 +50,17 @@ for monitor in get_monitors():
 pyglet.app.run()
 ```
 
-- Covers all monitors
-- Blocks mouse clicks
+**Behaviour:**
+
+- Covers all connected monitors
+- Blocks mouse interaction with underlying windows
 - Exit with `Esc` or `Enter`
 
 ---
 
-## Method 2: Adjust Actual Brightness
+## Method 2: Brightness Control
 
-Uses `screen_brightness_control` to directly change the monitor backlight. Does not block interaction.
+Adjusts monitor backlight level directly. Does not block interaction.
 ```python
 import screen_brightness_control as sbc
 
@@ -54,9 +76,19 @@ sbc.set_brightness(25)
 
 ---
 
-## When to Use Each
+## Comparison
 
-| Method | Use Case |
-|---|---|
-| Overlay blackout | Instant lockout, blocks all clicks and distractions |
-| Brightness control | Subtle dimming for eye strain or nighttime use |
+| | Blackout Overlay | Brightness Control |
+|---|---|---|
+| Blocks interaction | Yes | No |
+| Affects all monitors | Yes | Depends on driver support |
+| Requires display server | Yes | No |
+| Use case | Instant lockout, distraction blocking | Eye strain reduction, ambient dimming |
+
+---
+
+## Known Limitations
+
+- `screen_brightness_control` requires driver support. Behaviour varies by monitor and OS.
+- The blackout overlay requires a running display server. Not usable on headless systems.
+- `pyglet` may require additional system packages on some Linux distributions.
