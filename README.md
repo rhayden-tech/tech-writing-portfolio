@@ -1,30 +1,17 @@
 # Technical Writing Portfolio
 
-Collection of infrastructure, scripting, and system design documentation.
-
-## Topics Covered
-
-- Bash automation
-- Cron management
-- System monitoring
-- Raspberry Pi projects
-- Network usage tracking
-
-## Structure
-
-- /docs → documentation
-- /images → supporting visuals
+Technical documentation for Bash automation, system monitoring, and Raspberry Pi projects.
 
 ## Key Projects
 
 ### WiFi Usage Monitor
 Tracks monthly data usage using a Raspberry Pi and OLED display.  
-[Read the doc](docs/wifi-usage-monitor.md)
+[Read](docs/wifi-usage-monitor.md)
+
+### Non-Networked Meter Monitoring
+Captures daily images of a non-networked utility meter with retry logic, alerting, and sync to Windows.  
+[Read](docs/meter-capture.md)
 
 ### Bash Recycle Bin
-Safe delete system using a recycle directory instead of rm.  
-[Read the doc](docs/bash-recycle-bin.md)
-
-### Weekly Script Checker
-Detects scripts that haven’t run recently using cron and timestamps.  
-[Read the doc](docs/weekly-script-checker.md)
+Implements a safe delete mechanism using a recycle directory instead of rm.  
+[Read](docs/bash-recycle-bin.md)
