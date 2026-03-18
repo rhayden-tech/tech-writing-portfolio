@@ -18,7 +18,8 @@ Fully local, headless, self-starting, resilient to router outages, low power.
        2 days remaining until reset
 ```
 
-![Display black](../images/displayblack.PNG)
+![Display black](../images/displayblack.PNG)<br>
+  
 ![Display on](../images/displayscreen.PNG)
 
 ---
